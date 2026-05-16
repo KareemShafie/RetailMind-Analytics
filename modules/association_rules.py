@@ -1,13 +1,12 @@
 """
 Module 3: Market Basket Analysis — Association Rule Mining (Apriori)
-MARKETING-FRIENDLY VERSION with Business Language & Advanced Metrics
 Responsible Student: Jana jawabreh
 
 Technique: Apriori Algorithm
 - Finds frequent itemsets using minimum support threshold
 - Generates association rules using minimum confidence threshold
 - Calculates lift to identify real (non-coincidental) relationships
-- Translates technical metrics into business-friendly language
+
 """
 
 import pandas as pd
@@ -170,7 +169,7 @@ def explain_metrics_simple() -> str:
 **Relationship Strength (Lift):** How much more likely is B when A is bought, compared to random chance?
 - 1.0 = No relationship (buying A doesn't help predict B)
 - 3.0 = Customers are 3× more likely to buy B when they buy A
-- Higher = stronger, more profitable relationship
+- Higher = stronger, stronger relationship between products
 """
 
 

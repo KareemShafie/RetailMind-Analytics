@@ -1,16 +1,16 @@
 """
 RetailMind Analytics
-Interactive Data Mining Dashboard for Business Insights + Recommendation System
+Interactive Data Mining Dashboard for Business Insights and Recommendation System
 
 Responsible Students:
 - Abd Alkareem Shafie
-- Jana jwabreh
-- Bushra hurani
+- Jana Jawabreh
+- Bushra Hurani
 
 Shared Tasks:
 - Streamlit dashboard integration
 - Connect preprocessing, clustering, association rules, recommender, anomaly detection,
-  time series, customer profile, and business reporting modules.
+  time series, and customer profile.
 - Build an interactive, user-friendly, service-oriented data mining application.
 
 Project Idea:
@@ -29,8 +29,8 @@ from modules.preprocessing import (
 )
 
 from modules.clustering import (
-    compute_rfm,
-    scale_rfm,
+    compute_customer_features,
+    scale_customer_features,
     find_optimal_k,
     compare_clustering_methods,
     apply_clustering_method,
@@ -40,6 +40,8 @@ from modules.clustering import (
     explain_best_clustering_method,
     explain_clustering_metrics,
     build_segmentation_insights,
+    build_segment_action_plan,
+    build_customer_group_summary,
     plot_elbow,
     plot_pca_clusters,
     plot_svd_clusters,
@@ -70,6 +72,7 @@ from modules.recommender import (
     build_recommender_explanation,
     build_recommender_technical_explanation,
     build_recommendation_business_insight,
+    build_recommendation_action_summary,
     plot_recommendations,
     plot_popular_products,
     plot_recommender_quality,
@@ -93,7 +96,7 @@ from modules.time_series import (
     plot_heatmap,
 )
 
-from modules.reporting import build_insights_text, make_pdf_report
+
 
 
 # ============================================================
@@ -476,7 +479,7 @@ def themed_plotly_chart(fig, **kwargs):
 DEFAULT_SESSION_KEYS = {
     "df": None,
     "preprocessing_report": None,
-    "rfm": None,
+    "customer_segments": None,
     "used_cluster_features": None,
     "clustering_scores": None,
     "best_clustering_method": None,
@@ -518,6 +521,67 @@ def show_info(text: str):
 def show_success(text: str):
     """Render a success box."""
     st.markdown(f"<div class='success-box'>{text}</div>", unsafe_allow_html=True)
+
+
+def add_recommendation_strength_columns(recs: pd.DataFrame) -> pd.DataFrame:
+    """Add business-friendly strength labels if recommender scores are available."""
+    if recs is None or recs.empty:
+        return recs
+
+    display_df = recs.copy()
+    score_candidates = [
+        "RecommendationScore", "Score", "Similarity", "similarity",
+        "AvgSimilarity", "MatchScore", "match_score",
+    ]
+    score_col = next((col for col in score_candidates if col in display_df.columns), None)
+
+    if score_col is not None:
+        numeric_scores = pd.to_numeric(display_df[score_col], errors="coerce")
+        if numeric_scores.notna().any():
+            high_cut = numeric_scores.quantile(0.67)
+            low_cut = numeric_scores.quantile(0.33)
+
+            def strength_label(value):
+                if pd.isna(value):
+                    return "Recommended"
+                if value >= high_cut:
+                    return "High Match"
+                if value >= low_cut:
+                    return "Medium Match"
+                return "Discovery Option"
+
+            display_df["Match Strength"] = numeric_scores.apply(strength_label)
+        else:
+            display_df["Match Strength"] = "Recommended"
+    else:
+        display_df["Match Strength"] = "Recommended"
+
+    display_df["Recommended Business Action"] = display_df["Match Strength"].map(
+        {
+            "High Match": "Promote first in email campaigns or checkout suggestions",
+            "Medium Match": "Use as a secondary recommendation or bundle idea",
+            "Discovery Option": "Test in campaigns and monitor response",
+            "Recommended": "Use as a product recommendation opportunity",
+        }
+    ).fillna("Use as a product recommendation opportunity")
+
+    return display_df
+
+
+def business_recommendation_table(recs: pd.DataFrame) -> pd.DataFrame:
+    """Keep recommendation results easy for a business user to read."""
+    display_df = add_recommendation_strength_columns(recs)
+    if display_df is None or display_df.empty:
+        return display_df
+
+    preferred_columns = [
+        "Rank", "Description", "Product", "StockCode", "Match Strength",
+        "Recommended Business Action", "Revenue", "TotalSold", "UniqueCustomers",
+        "Orders", "Score", "Similarity", "RecommendationScore",
+    ]
+    existing = [col for col in preferred_columns if col in display_df.columns]
+    remaining = [col for col in display_df.columns if col not in existing]
+    return display_df[existing + remaining]
 
 
 # ============================================================
@@ -566,7 +630,7 @@ if uploaded_file:
             st.session_state.loaded_file = uploaded_file.name
 
             # Reset dependent computations when a new file is uploaded.
-            st.session_state.rfm = None
+            st.session_state.customer_segments = None
             st.session_state.used_cluster_features = None
             st.session_state.clustering_scores = None
             st.session_state.best_clustering_method = None
@@ -626,10 +690,10 @@ tabs = st.tabs(
         "👥 Customer Groups",
         "🛍️ What Sells Together?",
         "📈 Sales Trends",
-        "🚨 Anomalies",
+        "🚨 Unusual Orders",
         "🎯 Recommendations",
         "👤 Customer Profile",
-        "📄 Business Report",
+        
     ]
 )
 
@@ -826,17 +890,20 @@ with tabs[1]:
         st.dataframe(cleaning_df, width="stretch")
 
         st.markdown(
-            '<div class="section-header">Auto-Generated Columns</div>',
+            '<div class="section-header">Missing Fields Handled Automatically</div>',
             unsafe_allow_html=True,
+        )
+        show_info(
+            "If the uploaded dataset is missing optional fields, the system can generate safe replacements so the dashboard still works."
         )
 
         fallback_df = pd.DataFrame(
             [
-                ("Generated CustomerID", preprocessing_report.get("generated_customerid", False)),
-                ("Generated StockCode", preprocessing_report.get("generated_stockcode", False)),
-                ("Generated Country", preprocessing_report.get("generated_country", False)),
+                ("Customer ID", "Generated automatically" if preprocessing_report.get("generated_customerid", False) else "Already available"),
+                ("Product Code", "Generated automatically" if preprocessing_report.get("generated_stockcode", False) else "Already available"),
+                ("Country", "Generated automatically" if preprocessing_report.get("generated_country", False) else "Already available"),
             ],
-            columns=["Fallback", "Applied"],
+            columns=["Field", "Status"],
         )
 
         st.dataframe(fallback_df, width="stretch")
@@ -909,22 +976,27 @@ with tabs[2]:
     )
 
     customer_group_strategy = st.selectbox(
-        "Customer grouping strategy",
+        "Customer Analysis Mode",
         [
-            "Automatic: choose the most meaningful customer groups",
-            "Create fixed customer groups",
-            "Detect unusual customer patterns",
-            "Compare all methods for academic analysis",
+            "Automatic (Recommended for Business Use)",
+            "Balanced Customer Groups",
+            "Special Behavior Detection",
+            "Compare All Methods (Academic Analysis)",
         ],
+        help=(
+            "Choose how the system should analyze customers. Business users should keep Automatic. "
+            "Advanced users can compare the technical methods from the details section."
+        ),
     )
 
     show_customer_map = st.selectbox(
-        "Customer map view",
+        "Customer Insights View",
         [
             "Show simple customer map",
-            "Show PCA and SVD comparison for analysis",
+            "Advanced analytical comparison (PCA & SVD)",
             "Hide technical maps",
         ],
+        help="Choose how much visual analysis to show for customer groups.",
     )
 
     # Defaults keep the dashboard easy for business users.
@@ -952,9 +1024,9 @@ with tabs[2]:
 
         with c2:
             dbscan_eps_mode = st.selectbox(
-                "Unusual customer sensitivity mode",
+                "Unusual Customer Detection Mode",
                 ["Auto", "Manual"],
-                help="Auto lets the system estimate sensitivity for unusual customer detection.",
+                help="Auto lets the system estimate sensitivity for unusual customer detection. Manual lets analysts control it.",
             )
 
         with c3:
@@ -969,7 +1041,7 @@ with tabs[2]:
 
         with c4:
             dbscan_min_samples = st.slider(
-                "Minimum customers per unusual group",
+                "Minimum group size",
                 3,
                 25,
                 8,
@@ -986,35 +1058,35 @@ with tabs[2]:
             """
         )
 
-    if customer_group_strategy == "Automatic: choose the most meaningful customer groups":
+    if customer_group_strategy == "Automatic (Recommended for Business Use)":
         selected_method_option = "Auto-select best by Silhouette"
-    elif customer_group_strategy == "Create fixed customer groups":
+    elif customer_group_strategy == "Balanced Customer Groups":
         selected_method_option = "KMeans"
-    elif customer_group_strategy == "Detect unusual customer patterns":
+    elif customer_group_strategy == "Special Behavior Detection":
         selected_method_option = "DBSCAN"
     else:
         selected_method_option = "Auto-select best by Silhouette"
 
     if show_customer_map == "Show simple customer map":
         dim_view = "PCA Only"
-    elif show_customer_map == "Show PCA and SVD comparison for analysis":
+    elif show_customer_map == "Advanced analytical comparison (PCA & SVD)":
         dim_view = "PCA & SVD Comparison"
     else:
         dim_view = "Hide"
 
     run_seg = st.button("Analyze Customer Groups")
 
-    if run_seg or st.session_state.rfm is not None:
+    if run_seg or st.session_state.customer_segments is not None:
         with st.spinner("Analyzing customer behavior and building customer groups..."):
-            rfm = compute_rfm(df)
-            rfm_scaled, scaler, used_features = scale_rfm(rfm)
+            customer_features = compute_customer_features(df)
+            customer_scaled, scaler, used_features = scale_customer_features(customer_features)
 
-            k_range, inertias, silhouettes = find_optimal_k(rfm_scaled)
+            k_range, inertias, silhouettes = find_optimal_k(customer_scaled)
 
             eps_value = None if dbscan_eps_mode == "Auto" else dbscan_eps
 
             clustering_scores, method_labels, best_method = compare_clustering_methods(
-                rfm_scaled,
+                customer_scaled,
                 n_clusters=n_clusters,
                 dbscan_eps=eps_value,
                 dbscan_min_samples=dbscan_min_samples,
@@ -1026,29 +1098,62 @@ with tabs[2]:
                 else selected_method_option
             )
 
-            rfm_clustered = apply_clustering_method(
-                rfm,
+            customer_segments = apply_clustering_method(
+                customer_features,
                 method_labels[chosen_method],
                 chosen_method,
             )
 
-            pca_df, explained_var = apply_pca(rfm_scaled, rfm_clustered)
-            svd_df, svd_explained = apply_svd(rfm_scaled, rfm_clustered)
+            pca_df, explained_var = apply_pca(customer_scaled, customer_segments)
+            svd_df, svd_explained = apply_svd(customer_scaled, customer_segments)
             comparison_df = dimensionality_comparison_table(explained_var, svd_explained)
 
-            st.session_state.rfm = rfm_clustered
+            st.session_state.customer_segments = customer_segments
             st.session_state.used_cluster_features = used_features
             st.session_state.clustering_scores = clustering_scores
             st.session_state.best_clustering_method = best_method
 
         show_success(
-            f"""
+            """
             <b>Customer groups are ready.</b><br>
-            Recommended strategy selected by the system: <b>{best_method}</b>.<br>
-            Applied strategy in this dashboard: <b>{chosen_method}</b>.<br>
+            The system selected the most meaningful customer grouping approach for this dataset.<br>
             Use the segment names and suggested actions below to plan marketing campaigns,
             loyalty rewards, and reactivation offers.
             """
+        )
+
+        st.markdown(
+            '<div class="section-header">Recommended Business Actions</div>',
+            unsafe_allow_html=True,
+        )
+
+        a1, a2, a3 = st.columns(3)
+        a1.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>🏆 Reward</div>
+                <div class='metric-label'>Give VIP customers loyalty rewards, premium bundles, and exclusive offers</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        a2.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>📣 Grow</div>
+                <div class='metric-label'>Target growth customers with promotions and product recommendations</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        a3.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>🔁 Reactivate</div>
+                <div class='metric-label'>Send win-back discounts to at-risk or inactive customers</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
         st.markdown(
@@ -1056,14 +1161,27 @@ with tabs[2]:
             unsafe_allow_html=True,
         )
 
-        themed_plotly_chart(plot_segment_distribution(rfm_clustered), width="stretch")
+        themed_plotly_chart(plot_segment_distribution(customer_segments), width="stretch")
 
         st.markdown(
             '<div class="section-header">What should the business do?</div>',
             unsafe_allow_html=True,
         )
 
-        st.text(build_segmentation_insights(rfm_clustered))
+        st.text(build_segmentation_insights(customer_segments))
+
+        st.markdown(
+            '<div class="section-header">Why each customer group matters</div>',
+            unsafe_allow_html=True,
+        )
+        show_info(
+            """
+            This table converts the customer groups into clear marketing decisions.
+            It helps a business user understand <b>why the group matters</b> and <b>what action to take</b>.
+            """
+        )
+        segment_action_plan = build_segment_action_plan(customer_segments)
+        st.dataframe(segment_action_plan, width="stretch", height=330)
 
         st.markdown(
             '<div class="section-header">Average Customer Behavior by Segment</div>',
@@ -1076,7 +1194,7 @@ with tabs[2]:
             Use it to understand which groups spend more, buy more often, or have been inactive longer.
             """
         )
-        themed_plotly_chart(plot_cluster_profiles(rfm_clustered), width="stretch")
+        themed_plotly_chart(plot_cluster_profiles(customer_segments), width="stretch")
 
         if dim_view in ["PCA & SVD Comparison", "PCA Only"]:
             st.markdown(
@@ -1099,13 +1217,39 @@ with tabs[2]:
             unsafe_allow_html=True,
         )
 
+        campaign_df = customer_segments.sort_values("TotalSpend", ascending=False).copy()
+        campaign_df = campaign_df.rename(
+            columns={
+                "TotalSpend": "Total Spend",
+                "AvgOrderValue": "Average Order Value",
+                "CustomerActivityDays": "Activity Days",
+                "ProductDiversity": "Product Variety",
+            }
+        )
+        business_columns = [
+            col for col in [
+                "CustomerID",
+                "Segment",
+                "Total Spend",
+                "Average Order Value",
+                "OrderCount",
+                "DaysSinceLastPurchase",
+                "Product Variety",
+                "Activity Days",
+            ]
+            if col in campaign_df.columns
+        ]
         st.dataframe(
-            rfm_clustered.sort_values("Monetary", ascending=False),
+            campaign_df[business_columns],
             width="stretch",
             height=330,
         )
 
         with st.expander("Advanced Analytics Details"):
+            st.markdown("### Technical method selected")
+            st.write(f"Best method by evaluation metrics: {best_method}")
+            st.write(f"Applied technical method: {chosen_method}")
+
             st.markdown("### Features used by the customer grouping engine")
             st.write(st.session_state.used_cluster_features)
 
@@ -1129,7 +1273,7 @@ with tabs[2]:
 
 
 # ============================================================
-# Tab 4: Basket Rules (MARKETING-FRIENDLY VERSION)
+# Tab 4: Basket Rules 
 # ============================================================
 
 with tabs[3]:
@@ -1155,7 +1299,7 @@ with tabs[3]:
         st.markdown(
             f"""<div style="background:{bc_1_bg};border-left:4px solid {bc_1_border};
             border-radius:10px;padding:1rem;margin-bottom:1rem;">
-            <b style="color:{bc_1_title};">👥 Market Reach</b><br>
+            <b style="color:{bc_1_title};">👥 Basket Frequency</b><br>
             <span style="font-size:0.9rem;color:{text_muted};">
             How many customers buy BOTH items?<br>
             <br>
@@ -1187,8 +1331,8 @@ with tabs[3]:
             border-radius:10px;padding:1rem;margin-bottom:1rem;">
             <b style="color:{bc_3_title};">⚡ Auto-Calculated Metrics</b><br>
             <span style="font-size:0.9rem;color:{text_muted};">
-            <b>Strength (Lift):</b> How much more likely?<br>
-            <b>Market Reach:</b> How common is the pattern?<br>
+            <b>Relationship Strength (Lift):</b> How much more likely?<br>
+            <b>Basket Frequency:</b> How common is the pattern?<br>
             <b>Predictability:</b> How reliable is it?
             </span></div>""",
             unsafe_allow_html=True,
@@ -1210,13 +1354,13 @@ with tabs[3]:
         )
     with ctrl2:
         min_support = st.slider(
-            "👥 Market Reach %", min_value=1, max_value=20, value=5, step=1,
+            "👥 Basket Frequency %", min_value=1, max_value=100, value=5, step=1,format="%d%%",
             help="How many customers (%) buy BOTH items? Higher = more common patterns.",
         )
         min_support = min_support / 100
     with ctrl3:
         min_confidence = st.slider(
-            "🎯 Predictability %", min_value=10, max_value=90, value=30, step=5,
+            "🎯 Predictability %", min_value=1, max_value=100, value=30, step=5, format="%d%%",
             help="When A is bought, how often (%) is B also bought? Higher = more reliable.",
         )
         min_confidence = min_confidence / 100
@@ -1329,7 +1473,7 @@ with tabs[3]:
                 st.markdown(f"""
                     **Relationship Strength:** {rule['lift']}
 
-                    **Market Reach:** {rule['support']}
+                    **Basket Frequency:** {rule['support']}
 
                     **Predictability:** {rule['confidence']}
                 """)
@@ -1345,11 +1489,11 @@ with tabs[3]:
             "If Customer Buys",
             "They Also Buy",
             "Strength (Lift)",
-            "Market Reach (%)",
+            "Basket Frequency (%)",
             "Predictability (%)"
         ]
 
-        display_rules["Market Reach (%)"] = (display_rules["Market Reach (%)"] * 100).round(1).astype(str) + "%"
+        display_rules["Basket Frequency (%)"] = (display_rules["Basket Frequency (%)"] * 100).round(1).astype(str) + "%"
         display_rules["Predictability (%)"] = (display_rules["Predictability (%)"] * 100).round(1).astype(str) + "%"
 
         st.dataframe(display_rules.head(50), use_container_width=True, height=400)
@@ -1380,13 +1524,13 @@ with tabs[3]:
         with col3:
             st.info("📧 Share the Excel file with your marketing team and use in email campaigns!")
 
-        # ── Technical Details for Doctor ────────────────────────
-        with st.expander("📊 Technical Details (For Dr. & Advanced Users)"):
+        # ── Technical Details ────────────────────────
+        with st.expander("📊 Technical Details"):
             st.markdown(explain_metrics_simple())
 
             st.markdown("### What Each Metric Means:")
             st.markdown(f"""
-            - **Support (Market Reach):** {rules['support'].mean()*100:.1f}% average - how common are these combinations
+            - **Support (Basket Frequency):** {rules['support'].mean()*100:.1f}% average - how common are these combinations
             - **Confidence (Predictability):** {rules['confidence'].mean()*100:.1f}% average - reliability of the pattern
             - **Lift (Strength):** {rules['lift'].mean():.2f}x average - how much stronger than random chance
             """)
@@ -1408,27 +1552,28 @@ with tabs[3]:
     elif rules is not None and rules.empty:
         show_info(
             "❌ <b>No patterns found yet</b><br>"
-            "Try <b>raising the Market Reach %</b> (find more common items) "
+            "Try <b> lowering the Basket Frequency % to discover more patterns"
             "or <b>lowering the Predictability %</b> (find hidden opportunities)."
         )
     else:
         show_info(
             "👈 Set your preferences above and click <b>'Find Patterns'</b> to discover which products are bought together."
         )
+
 # ============================================================
 # Tab 5: Time Series
 # ============================================================
 
 with tabs[4]:
     st.markdown(
-        '<div class="section-header">Sales Trends / Time Series Analysis</div>',
+        '<div class="section-header">Sales Trends and Revenue Patterns</div>',
         unsafe_allow_html=True,
     )
 
     show_info(
         """
-        Time series analysis helps the business understand revenue trends,
-        seasonal patterns, peak buying times, and expected future sales.
+        This section shows how sales change over time, highlights busy selling days and hours, 
+        and estimates future revenue to support business planning.
         """
     )
 
@@ -1443,7 +1588,7 @@ with tabs[4]:
         themed_plotly_chart(plot_heatmap(heat), width="stretch")
 
     with b:
-        periods = st.slider("Forecast horizon (days)", 7, 90, 30)
+        periods = st.slider("How many future days to predict?", 7, 90, 30)
         fc = forecast_sales(daily, periods)
         themed_plotly_chart(plot_forecast(daily.tail(120), fc), width="stretch")
 
@@ -1454,25 +1599,24 @@ with tabs[4]:
         """
     )
 
-
 # ============================================================
 # Tab 6: Anomaly Detection
 # ============================================================
 
 with tabs[5]:
     st.markdown(
-        '<div class="section-header">Transaction Anomaly Detection</div>',
+        '<div class="section-header">Unusual Order Detection</div>',
         unsafe_allow_html=True,
     )
 
     show_info(
         """
-        Anomaly detection identifies unusual invoices, such as very high-value orders,
-        unusual quantities, or abnormal transaction patterns.
+        This section finds unusual invoices, such as very high-value orders, unusually large quantities, 
+        or purchase patterns that are different from normal customer behavior.
         """
     )
 
-    contamination = st.slider("Expected anomaly rate", 0.01, 0.15, 0.05, 0.01)
+    contamination = st.slider("Expected Unusual order rate", 0.01, 0.15, 0.05, 0.01)
 
     if st.button("Detect Unusual Invoices"):
         with st.spinner("Running Isolation Forest..."):
@@ -1503,9 +1647,7 @@ with tabs[5]:
         )
 
     else:
-        st.info("Run anomaly detection to flag unusual high-value or unusual-quantity invoices.")
-
-
+        st.info("Run unusul order detection to flag unusual high-value or unusual-quantity invoices.")
 # ============================================================
 # Tab 7: Recommendations
 # ============================================================
@@ -1516,7 +1658,13 @@ with tabs[6]:
         unsafe_allow_html=True,
     )
 
-    show_info(build_recommender_explanation())
+    show_info(
+        """
+        This section helps the business decide <b>what products to recommend, what products to bundle,</b>
+        and how to increase sales using previous purchase behavior. The customer does not need to understand
+        recommendation algorithms; the dashboard turns purchase history into practical sales actions.
+        """
+    )
 
     r1, r2, r3 = st.columns(3)
     r1.markdown(
@@ -1564,18 +1712,52 @@ with tabs[6]:
     rec_mode = st.radio(
         "Choose recommendation service",
         [
-            "Recommend products for a specific customer",
-            "Recommend add-on products for a basket",
+            "Customer-Based Recommendations",
+            "Basket Add-on Recommendations",
         ],
         horizontal=True,
+        help="Choose whether to recommend products for one customer or suggest add-ons for a current basket.",
     )
 
-    if rec_mode == "Recommend products for a specific customer":
+    if rec_mode == "Customer-Based Recommendations":
         show_info(
             """
-            Use this when you know the customer ID. The system checks the customer purchase
-            history and suggests products they are likely to buy next.
+            Use this when you know the customer ID. The system reviews what this customer bought before
+            and suggests products they are likely to buy next.
             """
+        )
+
+        st.markdown(
+            '<div class="section-header">How the business can use this</div>',
+            unsafe_allow_html=True,
+        )
+        b1, b2, b3 = st.columns(3)
+        b1.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>📧 Email Campaign</div>
+                <div class='metric-label'>Send personalized product suggestions to the customer</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        b2.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>🛒 Checkout Offer</div>
+                <div class='metric-label'>Show relevant products before checkout</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        b3.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>🎯 Targeted Sales</div>
+                <div class='metric-label'>Focus sales effort on products with stronger match potential</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
         c1, c2 = st.columns([2, 1])
@@ -1605,25 +1787,72 @@ with tabs[6]:
                 )
 
                 popular = get_popular_products(df, top_n)
-                st.dataframe(popular, width="stretch")
+                st.dataframe(business_recommendation_table(popular), width="stretch")
                 themed_plotly_chart(plot_popular_products(popular), width="stretch")
 
             else:
+                recs_display = business_recommendation_table(recs)
                 show_success(build_recommendation_business_insight(recs))
+                show_info(build_recommendation_action_summary(recs))
+
+                st.markdown(
+                    '<div class="section-header">Recommended Business Actions</div>',
+                    unsafe_allow_html=True,
+                )
+                show_info(
+                    """
+                    Start with products marked as <b>High Match</b>. Use them in email campaigns,
+                    product pages, and checkout suggestions. Medium matches can be tested as secondary offers.
+                    """
+                )
+
                 themed_plotly_chart(plot_recommendations(recs), width="stretch")
 
                 st.markdown(
                     '<div class="section-header">Recommendation List for Sales Team</div>',
                     unsafe_allow_html=True,
                 )
-                st.dataframe(recs, width="stretch")
+                st.dataframe(recs_display, width="stretch")
 
     else:
         show_info(
             """
             Use this when a customer already has products in the basket.
-            The system suggests add-on products that can be promoted before checkout.
+            The system suggests add-on products that can be promoted before checkout to increase basket value.
             """
+        )
+
+        st.markdown(
+            '<div class="section-header">Best use cases</div>',
+            unsafe_allow_html=True,
+        )
+        u1, u2, u3 = st.columns(3)
+        u1.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>📦 Bundle Offer</div>
+                <div class='metric-label'>Suggest products that fit naturally with the current basket</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        u2.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>⬆️ Upsell Moment</div>
+                <div class='metric-label'>Recommend add-ons while the customer is ready to buy</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        u3.markdown(
+            """
+            <div class='metric-card'>
+                <div class='metric-value'>🛍️ Store Layout</div>
+                <div class='metric-label'>Place related products closer in the online or physical store</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
         product_options = sorted(similarity_df.columns.tolist())
@@ -1646,14 +1875,28 @@ with tabs[6]:
             if "Message" in basket_recs.columns:
                 st.warning(basket_recs["Message"].iloc[0])
             else:
+                basket_recs_display = business_recommendation_table(basket_recs)
                 show_success(build_recommendation_business_insight(basket_recs))
+                show_info(build_recommendation_action_summary(basket_recs))
+
+                st.markdown(
+                    '<div class="section-header">Recommended Business Actions</div>',
+                    unsafe_allow_html=True,
+                )
+                show_info(
+                    """
+                    Use the strongest add-on products as checkout suggestions, bundle offers,
+                    or product-page recommendations. This helps increase average order value.
+                    """
+                )
+
                 themed_plotly_chart(plot_recommendations(basket_recs), width="stretch")
 
                 st.markdown(
                     '<div class="section-header">Suggested Add-on Products</div>',
                     unsafe_allow_html=True,
                 )
-                st.dataframe(basket_recs, width="stretch")
+                st.dataframe(basket_recs_display, width="stretch")
 
     st.markdown(
         '<div class="section-header">Popular Products Backup Plan</div>',
@@ -1670,22 +1913,28 @@ with tabs[6]:
     popular = get_popular_products(df, 15)
 
     themed_plotly_chart(plot_popular_products(popular), width="stretch")
-    st.dataframe(popular, width="stretch")
+    st.dataframe(business_recommendation_table(popular), width="stretch")
 
     with st.expander("Advanced Analytics Details"):
-        st.markdown("### Technical recommender explanation")
-        st.write(build_recommender_technical_explanation())
+        st.markdown("### Recommendation Engine Details")
+        st.write(
+            "The recommendation engine analyzes previous purchase behavior to suggest products "
+            "customers are likely to buy together. Advanced similarity analysis is used internally "
+            "to improve recommendation quality and avoid recommending products the customer already bought."
+        )
+        with st.expander("Show full technical method"):
+            st.write(build_recommender_technical_explanation())
 
-        st.markdown("### Recommender coverage indicators")
+        st.markdown("### Recommendation Coverage Indicators")
         quality_report = get_recommender_quality_report(matrix, similarity_df)
 
         q1, q2, q3, q4, q5 = st.columns(5)
 
         metric_card(q1, "Customers", f"{quality_report['customers_in_matrix']:,}")
         metric_card(q2, "Products", f"{quality_report['products_in_matrix']:,}")
-        metric_card(q3, "Density", f"{quality_report['matrix_density']}")
+        metric_card(q3, "Recommendation Coverage", f"{quality_report['matrix_density']}")
         metric_card(q4, "Avg Products / Customer", f"{quality_report['avg_products_per_customer']}")
-        metric_card(q5, "Avg Similarity", f"{quality_report['avg_similarity']}")
+        metric_card(q5, "Match Quality", f"{quality_report['avg_similarity']}")
 
         themed_plotly_chart(plot_recommender_quality(quality_report), width="stretch")
 
@@ -1726,17 +1975,17 @@ with tabs[7]:
     metric_card(b, "Orders", f"{orders:,}")
     metric_card(c, "Unique Products", f"{products:,}")
 
-    if st.session_state.rfm is not None:
-        row = st.session_state.rfm[
-            st.session_state.rfm["CustomerID"].astype(str) == str(selected_customer)
+    if st.session_state.customer_segments is not None:
+        row = st.session_state.customer_segments[
+            st.session_state.customer_segments["CustomerID"].astype(str) == str(selected_customer)
         ]
 
         if not row.empty:
             st.info(
                 f"Segment: {row.iloc[0]['Segment']} | "
-                f"Recency: {row.iloc[0]['Recency']} days | "
-                f"Frequency: {row.iloc[0]['Frequency']} | "
-                f"Monetary: £{row.iloc[0]['Monetary']:,.2f}"
+                f"Days Since Last Purchase: {row.iloc[0]['DaysSinceLastPurchase']} days | "
+                f"Orders: {row.iloc[0]['OrderCount']} | "
+                f"Total Spend: £{row.iloc[0]['TotalSpend']:,.2f}"
             )
         else:
             st.info("Run segmentation first to show this customer's segment.")
@@ -1768,51 +2017,3 @@ with tabs[7]:
     )
 
 
-# ============================================================
-# Tab 9: Business Report
-# ============================================================
-
-with tabs[8]:
-    st.markdown(
-        '<div class="section-header">Automated Business Report</div>',
-        unsafe_allow_html=True,
-    )
-
-    show_info(
-        """
-        The report summarizes key business insights generated by the system.
-        It can be downloaded as PDF or TXT and included in the final project submission.
-        """
-    )
-
-    report_text = build_insights_text(
-        df,
-        st.session_state.rfm,
-        st.session_state.rules,
-    )
-
-    if preprocessing_report:
-        report_text += "\n\n"
-        report_text += build_preprocessing_report_text(preprocessing_report)
-
-    if st.session_state.rfm is not None:
-        report_text += "\n\n"
-        report_text += build_segmentation_insights(st.session_state.rfm)
-
-    st.text_area("Generated Report", report_text, height=420)
-
-    pdf_bytes = make_pdf_report(report_text)
-
-    st.download_button(
-        "⬇️ Export Report as PDF",
-        data=pdf_bytes,
-        file_name="RetailMind_Business_Report.pdf",
-        mime="application/pdf",
-    )
-
-    st.download_button(
-        "⬇️ Export Report as TXT",
-        data=report_text.encode("utf-8"),
-        file_name="RetailMind_Business_Report.txt",
-        mime="text/plain",
-    )

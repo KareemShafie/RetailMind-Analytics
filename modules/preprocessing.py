@@ -1,7 +1,7 @@
 """
-Module 1: Flexible Data Loading, Cleaning & Feature Engineering
-Responsible Student: Abd Alkareem Shafie
-ID: 12241203
+Module 1: Flexible Data Loading, Cleaning and Feature Engineering
+Responsible Student: Jana Jawabreh
+
 
 Purpose:
 - Load CSV/XLSX/ZIP retail and e-commerce datasets.
