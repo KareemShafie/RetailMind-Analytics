@@ -164,20 +164,6 @@ It summarizes:
 
 ---
 
-### 8. 📝 Business Report
-
-The dashboard can generate a business report that summarizes important insights from the analysis.
-
-The report may include:
-
-- General business insights
-- Customer group summary
-- Product relationship insights
-- Sales trend observations
-- Recommendation value
-- Preprocessing summary
-
----
 
 ## 🖥️ Dashboard Tabs
 
