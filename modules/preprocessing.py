@@ -1,6 +1,6 @@
 """
 Module 1: Flexible Data Loading, Cleaning and Feature Engineering
-Responsible Student: Jana Jawabreh
+Responsible Student: Abd Alkareem Shafie
 
 
 Purpose:
