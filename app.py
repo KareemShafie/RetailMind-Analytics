@@ -2015,5 +2015,3 @@ with tabs[7]:
         width="stretch",
         height=280,
     )
-
-
